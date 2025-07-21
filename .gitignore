@@ -1,0 +1,8 @@
+token.json
+.env
+*.bak
+*.log
+__pycache__/
+/.claude
+/my_secrets.json
+/CLAUDE.md
