@@ -10,6 +10,7 @@
 - 緯度経度情報の自動修正（Google Maps API / 国土地理院API使用）
 - 最終正規化CSVの作成（複数ファイルの結合、重複除去、ソート）
 - ファイル名の自動修正（スペルミスなど）
+- **フォルダサイズ計算（新機能）**
 
 ## 必要な環境
 
@@ -76,6 +77,7 @@ python check_normalized_csv.py 東京都 渋谷区
 - `-u, --update`: 修正内容でCSVファイルを上書き更新
 - `-d, --delete`: ファイル名に「削除希望」を含むファイルを削除
 - `-f, --final`: 最終正規化CSV作成モード
+- `-s, --size`: **フォルダサイズ計算モード（新機能）**
 - `-lu, --last-updated`: 指定日時以降に更新されたファイルのみ処理
 
 ### 使用例
@@ -92,6 +94,12 @@ python check_normalized_csv.py 福岡県 福岡市 -f
 
 # 2025年7月1日以降に更新されたファイルのみチェック
 python check_normalized_csv.py -lu 20250701
+
+# 全自治体のフォルダサイズを計算
+python check_normalized_csv.py -s
+
+# 特定の都道府県のフォルダサイズを計算
+python check_normalized_csv.py 東京都 -s
 ```
 
 ## CSVファイル形式
@@ -146,6 +154,33 @@ prefecture,city,number,address,name,lat,long,note
 - `normarized` → `normalized`（l→r誤記）
 - 先頭の余計な文字列を除去
 
+### 5. フォルダサイズ計算機能（-sオプション）
+
+対象の自治体フォルダの使用容量を計算・表示します：
+
+- 各自治体フォルダ内の全ファイルサイズを合計
+- ファイル数も同時にカウント
+- 合計サイズを表示
+- サイズ上位10件をランキング形式で表示
+- サイズは人間が読みやすい形式（B、KB、MB、GB、TB）で表示
+
+#### 出力例
+```
+=== フォルダサイズ計算開始 ===
+[2行目] 東京都新宿区: 15.23 MB (45ファイル)
+[3行目] 東京都渋谷区: 12.45 MB (38ファイル)
+...
+
+=== サイズ計算結果 ===
+対象自治体数: 1747件
+合計サイズ: 2.34 GB
+
+=== サイズ上位10件 ===
+ 1. [2行目] 東京都新宿区: 15.23 MB (45ファイル)
+ 2. [3行目] 東京都渋谷区: 12.45 MB (38ファイル)
+...
+```
+
 ## ログ出力
 
 実行結果は以下に出力されます：
@@ -165,6 +200,15 @@ prefecture,city,number,address,name,lat,long,note
 ```bash
 # 全テストを実行
 python test_check_normalized_csv.py
+
+# サイズ計算機能のテスト
+python test_size_calculation.py
+
+# 統合テスト（基本機能）
+python test_size_integration.py
+
+# 統合テスト（実際のAPI使用）
+python test_size_integration.py --with-auth
 
 # 特定のテストクラスを実行
 python -m unittest test_check_normalized_csv.TestCheckCsvContent

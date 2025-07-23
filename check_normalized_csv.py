@@ -977,6 +977,85 @@ def should_skip_file_by_time(file_name, file_id, drive_service, last_updated):
         return True
     return False
 
+def format_size(size_bytes):
+    """バイトサイズを人間が読みやすい形式に変換"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
+    
+    return f"{size_bytes:.2f} {size_names[i]}"
+
+def calculate_folder_size(service, folder_id):
+    """フォルダ内の全ファイルのサイズを計算"""
+    total_size = 0
+    files = []
+    page_token = None
+    
+    while True:
+        response = service.files().list(
+            q=f"'{folder_id}' in parents",
+            spaces='drive',
+            fields='nextPageToken, files(id, name, mimeType, size)',
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+            pageToken=page_token
+        ).execute()
+        
+        for file in response.get('files', []):
+            if file['mimeType'] != 'application/vnd.google-apps.folder':  # フォルダ以外
+                if 'size' in file:
+                    total_size += int(file['size'])
+                files.append(file)
+        
+        page_token = response.get('nextPageToken', None)
+        if not page_token:
+            break
+    
+    return total_size, files
+
+def process_size_calculation(targets, drive_service):
+    """サイズ計算モードの処理"""
+    logger.info("=== フォルダサイズ計算開始 ===")
+    
+    total_size_all = 0
+    folder_sizes = []
+    
+    for row_num, pref, city, folder_id in targets:
+        try:
+            folder_size, files = calculate_folder_size(drive_service, folder_id)
+            total_size_all += folder_size
+            
+            folder_sizes.append({
+                'row_num': row_num,
+                'pref': pref,
+                'city': city,
+                'size': folder_size,
+                'file_count': len(files)
+            })
+            
+            logger.info(f"[{row_num}行目] {pref}{city}: {format_size(folder_size)} ({len(files)}ファイル)")
+            
+        except Exception as e:
+            logger.error(f"[{row_num}行目] {pref}{city}: サイズ計算エラー - {e}")
+    
+    # 結果の表示
+    logger.info("=== サイズ計算結果 ===")
+    logger.info(f"対象自治体数: {len(folder_sizes)}件")
+    logger.info(f"合計サイズ: {format_size(total_size_all)}")
+    
+    # サイズ順でソートして上位10件を表示
+    sorted_sizes = sorted(folder_sizes, key=lambda x: x['size'], reverse=True)
+    logger.info("=== サイズ上位10件 ===")
+    for i, folder in enumerate(sorted_sizes[:10], 1):
+        logger.info(f"{i:2d}. [{folder['row_num']}行目] {folder['pref']}{folder['city']}: {format_size(folder['size'])} ({folder['file_count']}ファイル)")
+    
+    return total_size_all
+
 def setup_logger_counters():
     """ログカウンターの設定"""
     counters = {
@@ -1021,6 +1100,7 @@ def main():
     parser.add_argument('-u', '--update', action='store_true', help='CSVの上書き保存を行う（指定しない場合はチェックのみ）')
     parser.add_argument('-d', '--delete', action='store_true', help='削除希望ファイルを削除する')
     parser.add_argument('-f', '--final', action='store_true', help='最終正規化CSV作成モード')
+    parser.add_argument('-s', '--size', action='store_true', help='フォルダサイズ計算モード')
     opts = parser.parse_args()
     
     # チェックのみモードの論理を反転
@@ -1029,6 +1109,8 @@ def main():
     opts.delete_mode = opts.delete
     # 最終正規化CSVモードの設定
     opts.final_mode = opts.final
+    # サイズ計算モードの設定
+    opts.size_mode = opts.size
 
     # ログ設定（ファイルオープンエラーハンドリング付き）
     try:
@@ -1065,6 +1147,7 @@ def main():
     mode_str = '上書きモード' if opts.update else 'チェックのみモード'
     delete_str = '削除モード' if opts.delete_mode else '削除なし'
     final_str = '最終正規化CSV作成モード' if opts.final_mode else ''
+    size_str = 'サイズ計算モード' if opts.size_mode else ''
     logger.info(f"=== 実行開始 ===")
     logger.info(f"コマンドライン引数: {args_str}")
     logger.info(f"最終更新日時: {last_updated_str}")
@@ -1072,6 +1155,8 @@ def main():
     logger.info(f"削除モード: {delete_str}")
     if opts.final_mode:
         logger.info(f"モード: {final_str}")
+    if opts.size_mode:
+        logger.info(f"モード: {size_str}")
 
     creds = get_credentials()
     gc = gspread.authorize(creds)
@@ -1079,6 +1164,11 @@ def main():
 
     counters = setup_logger_counters()
     targets = get_targets(gc, opts)
+
+    # サイズ計算モードの場合
+    if opts.size_mode:
+        process_size_calculation(targets, drive_service)
+        return
 
     for target in targets:
         counters['total_count'] += 1
