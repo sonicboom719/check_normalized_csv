@@ -1,8 +1,8 @@
 {
-  "SKIP_LATLONG_UPDATE_LIST": [
-    ["福岡県", "福岡市"],
-    ["千葉県", "習志野市"],
-    ["兵庫県", "加西市"]
-  ],
-  "BASE_FOLDER_ID": "1yOsYgLdHmd0v6BvA8Guainsx_jC8enx8"
-} 
+	"SKIP_LATLONG_UPDATE_LIST": [
+		["福岡県", "福岡市"],
+		["千葉県", "習志野市"],
+		["兵庫県", "加西市"]
+	],
+	"BASE_FOLDER_ID": "1yOsYgLdHmd0v6BvA8Guainsx_jC8enx8"
+}
