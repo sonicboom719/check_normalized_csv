@@ -7,7 +7,7 @@ Googleドライブのフォルダを2026年衆院選用にコピーするスク�
 
 機能:
     - my_settings.jsonで指定された基底フォルダ（BASE_FOLDER_ID）の直下の層からコピー
-    - {prefecture}/{city} または {prefecture}/立候補者なし/{city} の階層のみをコピー
+    - {prefecture}/{city} または 立候補者なし/{prefecture}/{city} の階層のみをコピー
     - *_normalized_final.csv または *_normalized_final_upd.csv のみをコピー対象とする
     - 「2025参院選後」フォルダは除外、その中の*_normalized_final_upd.csvは親フォルダにコピー
     - *_normalized_final.csvファイルは同じフォルダにコピー
@@ -260,7 +260,7 @@ def find_existing_folder(service, parent_id: str, folder_name: str) -> Optional[
     """親フォルダ内に同名のフォルダが既に存在するか確認"""
     items = list_drive_files(service, parent_id)
     for item in items:
-        if item['name'] == folder_name and item['mimeType'] == 'application/vnd.google-apps.folder':
+        if item['name'].strip() == folder_name and item['mimeType'] == 'application/vnd.google-apps.folder':
             return item['id']
     return None
 
@@ -268,7 +268,7 @@ def find_existing_file(service, parent_id: str, file_name: str) -> Optional[Dict
     """親フォルダ内に同名のファイルが既に存在するか確認"""
     items = list_drive_files(service, parent_id)
     for item in items:
-        if item['name'] == file_name and item['mimeType'] != 'application/vnd.google-apps.folder':
+        if item['name'].strip() == file_name and item['mimeType'] != 'application/vnd.google-apps.folder':
             return item
     return None
 
@@ -404,12 +404,27 @@ def count_target_files(service, source_folder_id: str) -> int:
 
     return total_count
 
-def process_city_folder(service, city_folder_id: str, target_city_folder_id: str, city_name: str, dry_run: bool = False):
+def add_suffix_to_filename(filename: str, suffix: str) -> str:
+    """
+    ファイル名にサフィックスを付加
+
+    例: add_suffix_to_filename('大磯町_normalized_final.csv', '_末尾')
+        → '大磯町_normalized_final_末尾.csv'
+    """
+    if not suffix:
+        return filename
+
+    # .csv の前にサフィックスを挿入
+    if filename.endswith('.csv'):
+        return filename[:-4] + suffix + '.csv'
+    return filename + suffix
+
+def process_city_folder(service, city_folder_id: str, target_city_folder_id: str, city_name: str, dry_run: bool = False, suffix: str = ''):
     """市区町村フォルダ内のCSVファイルを処理"""
     items = list_drive_files(service, city_folder_id)
 
     for item in items:
-        item_name = item['name']
+        item_name = item['name'].strip()  # ファイル名の前後の空白を削除
         item_id = item['id']
         mime_type = item['mimeType']
 
@@ -420,32 +435,36 @@ def process_city_folder(service, city_folder_id: str, target_city_folder_id: str
 
                 inner_items = list_drive_files(service, item_id)
                 for inner_item in inner_items:
-                    if inner_item['name'].endswith('_normalized_final_upd.csv'):
+                    inner_item_name = inner_item['name'].strip()  # ファイル名の前後の空白を削除
+                    if inner_item_name.endswith('_normalized_final_upd.csv'):
                         # 統計情報をカウント
                         statistics['normalized_final_upd_csv']['total'] += 1
 
+                        # サフィックスを付加したファイル名を生成
+                        target_file_name = add_suffix_to_filename(inner_item_name, suffix)
+
                         if dry_run:
-                            logger.info(f"    [DRY-RUN] ファイルコピー: {inner_item['name']} -> {city_name}/")
+                            logger.info(f"    [DRY-RUN] ファイルコピー: {inner_item_name} -> {target_file_name}")
                         else:
                             # 既存のファイルを確認
-                            existing_file = find_existing_file(service, target_city_folder_id, inner_item['name'])
+                            existing_file = find_existing_file(service, target_city_folder_id, target_file_name)
 
                             # 更新日時を比較してコピーすべきか判定
                             should_copy, reason = should_copy_file(service, inner_item['id'], existing_file)
 
                             if should_copy:
                                 if existing_file:
-                                    logger.info(f"    上書きコピー: {inner_item['name']} ({reason})")
+                                    logger.info(f"    上書きコピー: {inner_item_name} -> {target_file_name} ({reason})")
                                     delete_file(service, existing_file['id'])
                                 else:
-                                    logger.info(f"    新規コピー: {inner_item['name']}")
+                                    logger.info(f"    新規コピー: {inner_item_name} -> {target_file_name}")
 
-                                # ファイルをコピー
-                                copy_file(service, inner_item['id'], target_city_folder_id, show_progress=False)
+                                # ファイルをコピー（サフィックス付きファイル名で）
+                                copy_file(service, inner_item['id'], target_city_folder_id, new_name=target_file_name, show_progress=False)
                                 statistics['normalized_final_upd_csv']['copied'] += 1
                                 time.sleep(0.1)
                             else:
-                                logger.info(f"    スキップ（更新なし）: {inner_item['name']} ({reason})")
+                                logger.info(f"    スキップ（更新なし）: {target_file_name} ({reason})")
                                 statistics['normalized_final_upd_csv']['skipped'] += 1
             else:
                 # その他のフォルダはスキップ
@@ -460,149 +479,179 @@ def process_city_folder(service, city_folder_id: str, target_city_folder_id: str
                 statistics['normalized_final_csv']['total'] += 1
                 file_type = 'normalized_final_csv'
 
+            # サフィックスを付加したファイル名を生成
+            target_file_name = add_suffix_to_filename(item_name, suffix)
+
             if dry_run:
-                logger.info(f"    [DRY-RUN] ファイルコピー: {item_name} -> {city_name}/")
+                logger.info(f"    [DRY-RUN] ファイルコピー: {item_name} -> {target_file_name}")
             else:
                 # 既存のファイルを確認
-                existing_file = find_existing_file(service, target_city_folder_id, item_name)
+                existing_file = find_existing_file(service, target_city_folder_id, target_file_name)
 
                 # 更新日時を比較してコピーすべきか判定
                 should_copy, reason = should_copy_file(service, item_id, existing_file)
 
                 if should_copy:
                     if existing_file:
-                        logger.info(f"    上書きコピー: {item_name} ({reason})")
+                        logger.info(f"    上書きコピー: {item_name} -> {target_file_name} ({reason})")
                         delete_file(service, existing_file['id'])
                     else:
-                        logger.info(f"    新規コピー: {item_name}")
+                        logger.info(f"    新規コピー: {item_name} -> {target_file_name}")
 
-                    # ファイルをコピー
-                    copy_file(service, item_id, target_city_folder_id, show_progress=False)
+                    # ファイルをコピー（サフィックス付きファイル名で）
+                    copy_file(service, item_id, target_city_folder_id, new_name=target_file_name, show_progress=False)
                     statistics[file_type]['copied'] += 1
                     time.sleep(0.1)
                 else:
-                    logger.info(f"    スキップ（更新なし）: {item_name} ({reason})")
+                    logger.info(f"    スキップ（更新なし）: {target_file_name} ({reason})")
                     statistics[file_type]['skipped'] += 1
         else:
             # 対象外のファイルはスキップ
             logger.info(f"    スキップ（対象外のFile）: {item_name}")
 
-def copy_structure(service, source_folder_id: str, target_folder_id: str, dry_run: bool = False):
+def copy_structure(service, source_folder_id: str, target_folder_id: str, dry_run: bool = False, suffix: str = ''):
     """
     フォルダ構造をコピー
 
     処理対象:
     - {prefecture}/{city} の構造
-    - {prefecture}/立候補者なし/{city} の構造
+    - 立候補者なし/{prefecture}/{city} の構造
     - *_normalized_final.csv または *_normalized_final_upd.csv のみ
 
     特別な処理:
     - 「2025参院選後」フォルダは除外、その中の*_normalized_final_upd.csvのみを親フォルダにコピー
+    - suffixが指定されている場合、コピー先ファイル名に付加
     """
     logger.info("=== フォルダ構造のコピー開始 ===")
 
-    # 第1階層（都道府県）を取得
-    prefecture_items = list_drive_files(service, source_folder_id)
+    # 第1階層（都道府県 または 立候補者なし）を取得
+    first_level_items = list_drive_files(service, source_folder_id)
 
     # フォルダのみをフィルタリング
-    prefecture_folders = [item for item in prefecture_items if item['mimeType'] == 'application/vnd.google-apps.folder']
-    total_prefectures = len(prefecture_folders)
+    first_level_folders = [item for item in first_level_items if item['mimeType'] == 'application/vnd.google-apps.folder']
+    total_first_level = len(first_level_folders)
 
-    logger.info(f"都道府県数: {total_prefectures}")
+    logger.info(f"第1階層フォルダ数: {total_first_level}")
 
-    for pref_idx, prefecture_item in enumerate(prefecture_folders, 1):
-        prefecture_name = prefecture_item['name']
-        prefecture_id = prefecture_item['id']
+    for first_idx, first_item in enumerate(first_level_folders, 1):
+        first_name = first_item['name'].strip()  # フォルダ名の前後の空白を削除
+        first_id = first_item['id']
 
-        logger.info(f"[{pref_idx}/{total_prefectures}] 都道府県フォルダ: {prefecture_name}")
+        if first_name == "立候補者なし":
+            # 立候補者なしフォルダの場合
+            logger.info(f"[{first_idx}/{total_first_level}] 立候補者なしフォルダ: {first_name}")
 
-        # 都道府県フォルダを作成または既存フォルダを使用
-        if dry_run:
-            logger.info(f"  [DRY-RUN] フォルダ作成: {prefecture_name}")
-            target_prefecture_id = None
-        else:
-            existing_prefecture_id = find_existing_folder(service, target_folder_id, prefecture_name)
-            if existing_prefecture_id:
-                logger.info(f"  既存のフォルダを使用: {prefecture_name} (ID: {existing_prefecture_id})")
-                target_prefecture_id = existing_prefecture_id
+            # 立候補者なしフォルダを作成または既存フォルダを使用
+            if dry_run:
+                logger.info(f"  [DRY-RUN] フォルダ作成: {first_name}")
+                target_nocandidate_id = None
             else:
-                target_prefecture_id = create_folder(service, prefecture_name, target_folder_id)
-                if not target_prefecture_id:
-                    logger.error(f"  フォルダ作成に失敗: {prefecture_name}")
-                    continue
-
-        # 第2階層（市区町村 または 立候補者なし）を取得
-        second_level_items = list_drive_files(service, prefecture_id)
-
-        # フォルダのみをフィルタリング
-        city_folders = [item for item in second_level_items if item['mimeType'] == 'application/vnd.google-apps.folder']
-        total_cities = len(city_folders)
-
-        for city_idx, second_item in enumerate(city_folders, 1):
-            second_name = second_item['name']
-            second_id = second_item['id']
-
-            if second_name == "立候補者なし":
-                # 立候補者なしフォルダの場合
-                logger.info(f"  [{pref_idx}/{total_prefectures}][{city_idx}/{total_cities}] 立候補者なしフォルダ: {second_name}")
-
-                # 立候補者なしフォルダを作成または既存フォルダを使用
-                if dry_run:
-                    logger.info(f"    [DRY-RUN] フォルダ作成: {second_name}")
-                    target_nocandidate_id = None
+                existing_nocandidate_id = find_existing_folder(service, target_folder_id, first_name)
+                if existing_nocandidate_id:
+                    logger.info(f"  既存のフォルダを使用: {first_name} (ID: {existing_nocandidate_id})")
+                    target_nocandidate_id = existing_nocandidate_id
                 else:
-                    existing_nocandidate_id = find_existing_folder(service, target_prefecture_id, second_name)
-                    if existing_nocandidate_id:
-                        logger.info(f"    既存のフォルダを使用: {second_name} (ID: {existing_nocandidate_id})")
-                        target_nocandidate_id = existing_nocandidate_id
-                    else:
-                        target_nocandidate_id = create_folder(service, second_name, target_prefecture_id)
-                        if not target_nocandidate_id:
-                            logger.error(f"    フォルダ作成に失敗: {second_name}")
-                            continue
-
-                # 立候補者なしフォルダの下の市区町村フォルダを処理
-                city_items = list_drive_files(service, second_id)
-                for city_item in city_items:
-                    if city_item['mimeType'] != 'application/vnd.google-apps.folder':
-                        logger.info(f"    スキップ（フォルダ以外）: {city_item['name']}")
+                    target_nocandidate_id = create_folder(service, first_name, target_folder_id)
+                    if not target_nocandidate_id:
+                        logger.error(f"  フォルダ作成に失敗: {first_name}")
                         continue
 
-                    city_name = city_item['name']
-                    city_id = city_item['id']
+            # 立候補者なしフォルダの下の都道府県フォルダを処理
+            nocandidate_prefecture_items = list_drive_files(service, first_id)
+            nocandidate_prefecture_folders = [item for item in nocandidate_prefecture_items if item['mimeType'] == 'application/vnd.google-apps.folder']
+            total_nocandidate_prefectures = len(nocandidate_prefecture_folders)
 
-                    logger.info(f"    [{pref_idx}/{total_prefectures}][{city_idx}/{total_cities}] 市区町村フォルダ: {city_name}")
+            logger.info(f"  立候補者なし配下の都道府県数: {total_nocandidate_prefectures}")
+
+            for nc_pref_idx, nc_prefecture_item in enumerate(nocandidate_prefecture_folders, 1):
+                nc_prefecture_name = nc_prefecture_item['name'].strip()  # フォルダ名の前後の空白を削除
+                nc_prefecture_id = nc_prefecture_item['id']
+
+                logger.info(f"  [{first_idx}/{total_first_level}][{nc_pref_idx}/{total_nocandidate_prefectures}] 都道府県フォルダ: {nc_prefecture_name}")
+
+                # 都道府県フォルダを作成または既存フォルダを使用
+                if dry_run:
+                    logger.info(f"    [DRY-RUN] フォルダ作成: {nc_prefecture_name}")
+                    target_nc_prefecture_id = None
+                else:
+                    existing_nc_prefecture_id = find_existing_folder(service, target_nocandidate_id, nc_prefecture_name)
+                    if existing_nc_prefecture_id:
+                        logger.info(f"    既存のフォルダを使用: {nc_prefecture_name} (ID: {existing_nc_prefecture_id})")
+                        target_nc_prefecture_id = existing_nc_prefecture_id
+                    else:
+                        target_nc_prefecture_id = create_folder(service, nc_prefecture_name, target_nocandidate_id)
+                        if not target_nc_prefecture_id:
+                            logger.error(f"    フォルダ作成に失敗: {nc_prefecture_name}")
+                            continue
+
+                # 第3階層（市区町村）を取得
+                nc_city_items = list_drive_files(service, nc_prefecture_id)
+                nc_city_folders = [item for item in nc_city_items if item['mimeType'] == 'application/vnd.google-apps.folder']
+                total_nc_cities = len(nc_city_folders)
+
+                for nc_city_idx, nc_city_item in enumerate(nc_city_folders, 1):
+                    nc_city_name = nc_city_item['name'].strip()  # フォルダ名の前後の空白を削除
+                    nc_city_id = nc_city_item['id']
+
+                    logger.info(f"    [{first_idx}/{total_first_level}][{nc_pref_idx}/{total_nocandidate_prefectures}][{nc_city_idx}/{total_nc_cities}] 市区町村フォルダ: {nc_city_name}")
 
                     # 市区町村フォルダを作成または既存フォルダを使用
                     if dry_run:
-                        logger.info(f"      [DRY-RUN] フォルダ作成: {city_name}")
+                        logger.info(f"      [DRY-RUN] フォルダ作成: {nc_city_name}")
                         # ドライランでもCSVファイルを検出して表示
-                        process_city_folder(service, city_id, None, city_name, dry_run)
+                        process_city_folder(service, nc_city_id, None, nc_city_name, dry_run, suffix)
                     else:
-                        existing_city_id = find_existing_folder(service, target_nocandidate_id, city_name)
-                        if existing_city_id:
-                            logger.info(f"      既存のフォルダを使用: {city_name} (ID: {existing_city_id})")
-                            target_city_id = existing_city_id
+                        existing_nc_city_id = find_existing_folder(service, target_nc_prefecture_id, nc_city_name)
+                        if existing_nc_city_id:
+                            logger.info(f"      既存のフォルダを使用: {nc_city_name} (ID: {existing_nc_city_id})")
+                            target_nc_city_id = existing_nc_city_id
                         else:
-                            target_city_id = create_folder(service, city_name, target_nocandidate_id)
-                            if not target_city_id:
-                                logger.error(f"      フォルダ作成に失敗: {city_name}")
+                            target_nc_city_id = create_folder(service, nc_city_name, target_nc_prefecture_id)
+                            if not target_nc_city_id:
+                                logger.error(f"      フォルダ作成に失敗: {nc_city_name}")
                                 continue
 
                         # CSVファイルを処理
-                        process_city_folder(service, city_id, target_city_id, city_name, dry_run)
-            else:
-                # 通常の市区町村フォルダ
-                city_name = second_name
-                city_id = second_id
+                        process_city_folder(service, nc_city_id, target_nc_city_id, nc_city_name, dry_run, suffix)
 
-                logger.info(f"  [{pref_idx}/{total_prefectures}][{city_idx}/{total_cities}] 市区町村フォルダ: {city_name}")
+        else:
+            # 通常の都道府県フォルダ
+            prefecture_name = first_name
+            prefecture_id = first_id
+
+            logger.info(f"[{first_idx}/{total_first_level}] 都道府県フォルダ: {prefecture_name}")
+
+            # 都道府県フォルダを作成または既存フォルダを使用
+            if dry_run:
+                logger.info(f"  [DRY-RUN] フォルダ作成: {prefecture_name}")
+                target_prefecture_id = None
+            else:
+                existing_prefecture_id = find_existing_folder(service, target_folder_id, prefecture_name)
+                if existing_prefecture_id:
+                    logger.info(f"  既存のフォルダを使用: {prefecture_name} (ID: {existing_prefecture_id})")
+                    target_prefecture_id = existing_prefecture_id
+                else:
+                    target_prefecture_id = create_folder(service, prefecture_name, target_folder_id)
+                    if not target_prefecture_id:
+                        logger.error(f"  フォルダ作成に失敗: {prefecture_name}")
+                        continue
+
+            # 第2階層（市区町村）を取得
+            city_items = list_drive_files(service, prefecture_id)
+            city_folders = [item for item in city_items if item['mimeType'] == 'application/vnd.google-apps.folder']
+            total_cities = len(city_folders)
+
+            for city_idx, city_item in enumerate(city_folders, 1):
+                city_name = city_item['name'].strip()  # フォルダ名の前後の空白を削除
+                city_id = city_item['id']
+
+                logger.info(f"  [{first_idx}/{total_first_level}][{city_idx}/{total_cities}] 市区町村フォルダ: {city_name}")
 
                 # 市区町村フォルダを作成または既存フォルダを使用
                 if dry_run:
                     logger.info(f"    [DRY-RUN] フォルダ作成: {city_name}")
                     # ドライランでもCSVファイルを検出して表示
-                    process_city_folder(service, city_id, None, city_name, dry_run)
+                    process_city_folder(service, city_id, None, city_name, dry_run, suffix)
                 else:
                     existing_city_id = find_existing_folder(service, target_prefecture_id, city_name)
                     if existing_city_id:
@@ -615,7 +664,7 @@ def copy_structure(service, source_folder_id: str, target_folder_id: str, dry_ru
                             continue
 
                     # CSVファイルを処理
-                    process_city_folder(service, city_id, target_city_id, city_name, dry_run)
+                    process_city_folder(service, city_id, target_city_id, city_name, dry_run, suffix)
 
     logger.info("=== フォルダ構造のコピー完了 ===")
 
@@ -623,11 +672,14 @@ def main():
     parser = argparse.ArgumentParser(description='Googleドライブのフォルダを2026年衆院選用にコピー')
     parser.add_argument('target_folder_id', nargs='?', help='コピー先フォルダID（省略時はmy_settings.jsonのDEST_FOLDER_IDを使用）')
     parser.add_argument('--dry-run', action='store_true', help='実際のコピーは行わず、処理内容のみ表示')
+    parser.add_argument('--suffix', type=str, default='', help='コピー先ファイル名に付加するサフィックス（例: --suffix=_末尾 → *_normalized_final_末尾.csv）')
 
     args = parser.parse_args()
 
     logger.info("=== フォルダコピー開始 ===")
     logger.info(f"ドライラン: {args.dry_run}")
+    if args.suffix:
+        logger.info(f"ファイル名サフィックス: {args.suffix}")
 
     try:
         # 認証情報を取得
@@ -681,7 +733,7 @@ def main():
         statistics['normalized_final_upd_csv'] = {'total': 0, 'copied': 0, 'skipped': 0}
 
         # フォルダ構造をコピー
-        copy_structure(service, source_folder_id, target_folder_id, args.dry_run)
+        copy_structure(service, source_folder_id, target_folder_id, args.dry_run, args.suffix)
 
         # 統計情報を表示
         logger.info("=== 統計情報 ===")
