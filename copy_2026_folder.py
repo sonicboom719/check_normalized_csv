@@ -9,7 +9,7 @@ Googleドライブのフォルダを2026年衆院選用にコピーするスク�
     - my_settings.jsonで指定された基底フォルダ（BASE_FOLDER_ID）の直下の層からコピー
     - {prefecture}/{city} または 立候補者なし/{prefecture}/{city} の階層のみをコピー
     - *_normalized_final.csv または *_normalized_final_upd.csv のみをコピー対象とする
-    - 「2025参院選後」フォルダは除外、その中の*_normalized_final_upd.csvは親フォルダにコピー
+    - 「2025参院選後」または「2025参議院選挙後」フォルダは除外、その中の*_normalized_final_upd.csvは親フォルダにコピー
     - *_normalized_final.csvファイルは同じフォルダにコピー
 """
 
@@ -378,8 +378,8 @@ def count_target_files(service, source_folder_id: str) -> int:
                     # CSVファイルをカウント
                     for file_item in city_files:
                         if file_item['mimeType'] == 'application/vnd.google-apps.folder':
-                            # 「2025参院選後」フォルダの中身もチェック
-                            if file_item['name'] == "2025参院選後":
+                            # 「2025参院選後」または「2025参議院選挙後」フォルダの中身もチェック
+                            if file_item['name'] == "2025参院選後" or file_item['name'] == "2025参議院選挙後":
                                 inner_files = list_drive_files(service, file_item['id'])
                                 for inner_file in inner_files:
                                     if inner_file['name'].endswith('_normalized_final_upd.csv'):
@@ -393,8 +393,8 @@ def count_target_files(service, source_folder_id: str) -> int:
                 # CSVファイルをカウント
                 for file_item in city_files:
                     if file_item['mimeType'] == 'application/vnd.google-apps.folder':
-                        # 「2025参院選後」フォルダの中身もチェック
-                        if file_item['name'] == "2025参院選後":
+                        # 「2025参院選後」または「2025参議院選挙後」フォルダの中身もチェック
+                        if file_item['name'] == "2025参院選後" or file_item['name'] == "2025参議院選挙後":
                             inner_files = list_drive_files(service, file_item['id'])
                             for inner_file in inner_files:
                                 if inner_file['name'].endswith('_normalized_final_upd.csv'):
@@ -429,13 +429,15 @@ def process_city_folder(service, city_folder_id: str, target_city_folder_id: str
         mime_type = item['mimeType']
 
         if mime_type == 'application/vnd.google-apps.folder':
-            # 「2025参院選後」フォルダの特別処理
-            if item_name == "2025参院選後":
-                logger.info(f"  「2025参院選後」フォルダを検出 - 中身の*_normalized_final_upd.csvを親フォルダにコピーします")
+            # 「2025参院選後」または「2025参議院選挙後」フォルダの特別処理
+            if item_name == "2025参院選後" or item_name == "2025参議院選挙後":
+                logger.info(f"  「{item_name}」フォルダを検出 - 中身の*_normalized_final_upd.csvを親フォルダにコピーします")
 
                 inner_items = list_drive_files(service, item_id)
+                logger.info(f"    フォルダ内のファイル数: {len(inner_items)}")
                 for inner_item in inner_items:
                     inner_item_name = inner_item['name'].strip()  # ファイル名の前後の空白を削除
+                    logger.info(f"    検出ファイル: {inner_item_name} (判定: {inner_item_name.endswith('_normalized_final_upd.csv')})")
                     if inner_item_name.endswith('_normalized_final_upd.csv'):
                         # 統計情報をカウント
                         statistics['normalized_final_upd_csv']['total'] += 1
@@ -519,7 +521,7 @@ def copy_structure(service, source_folder_id: str, target_folder_id: str, dry_ru
     - *_normalized_final.csv または *_normalized_final_upd.csv のみ
 
     特別な処理:
-    - 「2025参院選後」フォルダは除外、その中の*_normalized_final_upd.csvのみを親フォルダにコピー
+    - 「2025参院選後」または「2025参議院選挙後」フォルダは除外、その中の*_normalized_final_upd.csvのみを親フォルダにコピー
     - suffixが指定されている場合、コピー先ファイル名に付加
     """
     logger.info("=== フォルダ構造のコピー開始 ===")
